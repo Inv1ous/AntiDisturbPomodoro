@@ -11,7 +11,7 @@ struct SettingsView: View {
                     Label("Profiles", systemImage: "person.2")
                 }
             
-            RulesetSettingsTab()
+            TimingSettingsTab()
                 .tabItem {
                     Label("Timing", systemImage: "clock")
                 }
@@ -19,11 +19,6 @@ struct SettingsView: View {
             SoundsSettingsTab()
                 .tabItem {
                     Label("Sounds", systemImage: "speaker.wave.2")
-                }
-            
-            NotificationsSettingsTab()
-                .tabItem {
-                    Label("Alerts", systemImage: "bell")
                 }
             
             OverlaySettingsTab()
@@ -46,7 +41,7 @@ struct SettingsView: View {
                     Label("Stats", systemImage: "chart.bar")
                 }
         }
-        .frame(width: 550, height: 450)
+        .frame(width: 580, height: 500)
         .overlay(SettingsWindowConfigurator().frame(width: 0, height: 0))
     }
 }
@@ -173,44 +168,54 @@ struct ProfilesSettingsTab: View {
     }
 }
 
-// MARK: - Ruleset Tab
+// MARK: - Timing Tab
 
-struct RulesetSettingsTab: View {
+struct TimingSettingsTab: View {
     @EnvironmentObject var profileStore: ProfileStore
     
     var body: some View {
         Form {
             if let profile = profileStore.currentProfile {
                 Section("Work Session") {
-                    Stepper(
-                        "Duration: \(profile.ruleset.workSeconds / 60) minutes",
-                        value: Binding(
-                            get: { profile.ruleset.workSeconds / 60 },
-                            set: { newValue in profileStore.updateCurrentProfile { $0.ruleset.workSeconds = newValue * 60 } }
+                    DurationPicker(
+                        label: "Work Duration",
+                        seconds: Binding(
+                            get: { profile.ruleset.workSeconds },
+                            set: { newValue in profileStore.updateCurrentProfile { $0.ruleset.workSeconds = newValue } }
                         ),
-                        in: 1...120
+                        range: 1...7200  // 1 sec to 2 hours
+                    )
+                    
+                    Stepper(
+                        "Warning \(profile.notifications.workWarningSecondsBeforeEnd)s before end",
+                        value: Binding(
+                            get: { profile.notifications.workWarningSecondsBeforeEnd },
+                            set: { newValue in profileStore.updateCurrentProfile { $0.notifications.workWarningSecondsBeforeEnd = newValue } }
+                        ),
+                        in: 10...300,
+                        step: 5
                     )
                 }
                 
                 Section("Short Break") {
-                    Stepper(
-                        "Duration: \(profile.ruleset.shortBreakSeconds / 60) minutes",
-                        value: Binding(
-                            get: { profile.ruleset.shortBreakSeconds / 60 },
-                            set: { newValue in profileStore.updateCurrentProfile { $0.ruleset.shortBreakSeconds = newValue * 60 } }
+                    DurationPicker(
+                        label: "Short Break Duration",
+                        seconds: Binding(
+                            get: { profile.ruleset.shortBreakSeconds },
+                            set: { newValue in profileStore.updateCurrentProfile { $0.ruleset.shortBreakSeconds = newValue } }
                         ),
-                        in: 1...60
+                        range: 1...1800  // 1 sec to 30 min
                     )
                 }
                 
                 Section("Long Break") {
-                    Stepper(
-                        "Duration: \(profile.ruleset.longBreakSeconds / 60) minutes",
-                        value: Binding(
-                            get: { profile.ruleset.longBreakSeconds / 60 },
-                            set: { newValue in profileStore.updateCurrentProfile { $0.ruleset.longBreakSeconds = newValue * 60 } }
+                    DurationPicker(
+                        label: "Long Break Duration",
+                        seconds: Binding(
+                            get: { profile.ruleset.longBreakSeconds },
+                            set: { newValue in profileStore.updateCurrentProfile { $0.ruleset.longBreakSeconds = newValue } }
                         ),
-                        in: 1...120
+                        range: 1...3600  // 1 sec to 1 hour
                     )
                     
                     Stepper(
@@ -220,6 +225,32 @@ struct RulesetSettingsTab: View {
                             set: { newValue in profileStore.updateCurrentProfile { $0.ruleset.longBreakEvery = newValue } }
                         ),
                         in: 2...10
+                    )
+                }
+                
+                Section("Break Warnings (Short & Long)") {
+                    Stepper(
+                        "Warning \(profile.notifications.breakWarningSecondsBeforeEnd)s before end",
+                        value: Binding(
+                            get: { profile.notifications.breakWarningSecondsBeforeEnd },
+                            set: { newValue in profileStore.updateCurrentProfile { $0.notifications.breakWarningSecondsBeforeEnd = newValue } }
+                        ),
+                        in: 10...300,
+                        step: 5
+                    )
+                    
+                    Text("Applies to both short and long breaks.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+                
+                Section("System Notifications") {
+                    FeatureToggle(
+                        title: "Show banner notifications",
+                        isOn: Binding(
+                            get: { profile.notifications.bannerEnabled },
+                            set: { newValue in profileStore.updateCurrentProfile { $0.notifications.bannerEnabled = newValue } }
+                        )
                     )
                 }
             } else {
@@ -245,45 +276,118 @@ struct SoundsSettingsTab: View {
         Form {
             if let profile = profileStore.currentProfile {
                 Section("Sound Selection") {
-                    SoundPicker(
+                    SoundPickerRow(
                         title: "Work End",
-                        selectedId: Binding(
+                        soundId: Binding(
                             get: { profile.sounds.workEndSoundId },
                             set: { newValue in profileStore.updateCurrentProfile { $0.sounds.workEndSoundId = newValue } }
+                        ),
+                        volume: Binding(
+                            get: { profile.alarm.workEndVolume },
+                            set: { newValue in profileStore.updateCurrentProfile { $0.alarm.workEndVolume = newValue } }
                         )
                     )
 
-                    SoundPicker(
+                    SoundPickerRow(
                         title: "Break End",
-                        selectedId: Binding(
+                        soundId: Binding(
                             get: { profile.sounds.breakEndSoundId },
                             set: { newValue in profileStore.updateCurrentProfile { $0.sounds.breakEndSoundId = newValue } }
+                        ),
+                        volume: Binding(
+                            get: { profile.alarm.breakEndVolume },
+                            set: { newValue in profileStore.updateCurrentProfile { $0.alarm.breakEndVolume = newValue } }
                         )
                     )
 
-                    SoundPicker(
+                    SoundPickerRow(
                         title: "Work Warning",
-                        selectedId: Binding(
+                        soundId: Binding(
                             get: { profile.sounds.workWarningSoundId },
                             set: { newValue in profileStore.updateCurrentProfile { $0.sounds.workWarningSoundId = newValue } }
+                        ),
+                        volume: Binding(
+                            get: { profile.alarm.workWarningVolume },
+                            set: { newValue in profileStore.updateCurrentProfile { $0.alarm.workWarningVolume = newValue } }
                         )
                     )
 
-                    SoundPicker(
+                    SoundPickerRow(
                         title: "Break Warning",
-                        selectedId: Binding(
+                        soundId: Binding(
                             get: { profile.sounds.breakWarningSoundId },
                             set: { newValue in profileStore.updateCurrentProfile { $0.sounds.breakWarningSoundId = newValue } }
+                        ),
+                        volume: Binding(
+                            get: { profile.alarm.breakWarningVolume },
+                            set: { newValue in profileStore.updateCurrentProfile { $0.alarm.breakWarningVolume = newValue } }
                         )
+                    )
+                }
+                
+                Section("Alarm Duration") {
+                    AlarmDurationRow(
+                        title: "Work warning",
+                        value: Binding(
+                            get: { profile.alarm.workWarningPlayValue },
+                            set: { newValue in profileStore.updateCurrentProfile { $0.alarm.workWarningPlayValue = newValue } }
+                        ),
+                        mode: Binding(
+                            get: { profile.alarm.workWarningPlayMode },
+                            set: { newValue in profileStore.updateCurrentProfile { $0.alarm.workWarningPlayMode = newValue } }
+                        ),
+                        maxValueForSeconds: 30,
+                        maxValueForLoops: 10
+                    )
+                    
+                    AlarmDurationRow(
+                        title: "Break warning",
+                        value: Binding(
+                            get: { profile.alarm.breakWarningPlayValue },
+                            set: { newValue in profileStore.updateCurrentProfile { $0.alarm.breakWarningPlayValue = newValue } }
+                        ),
+                        mode: Binding(
+                            get: { profile.alarm.breakWarningPlayMode },
+                            set: { newValue in profileStore.updateCurrentProfile { $0.alarm.breakWarningPlayMode = newValue } }
+                        ),
+                        maxValueForSeconds: 30,
+                        maxValueForLoops: 10
+                    )
+                    
+                    AlarmDurationRow(
+                        title: "Work end (break starts)",
+                        value: Binding(
+                            get: { profile.alarm.breakStartPlayValue },
+                            set: { newValue in profileStore.updateCurrentProfile { $0.alarm.breakStartPlayValue = newValue } }
+                        ),
+                        mode: Binding(
+                            get: { profile.alarm.breakStartPlayMode },
+                            set: { newValue in profileStore.updateCurrentProfile { $0.alarm.breakStartPlayMode = newValue } }
+                        ),
+                        maxValueForSeconds: 60,
+                        maxValueForLoops: 15
+                    )
+                    
+                    AlarmDurationRow(
+                        title: "Break end",
+                        value: Binding(
+                            get: { profile.alarm.breakEndPlayValue },
+                            set: { newValue in profileStore.updateCurrentProfile { $0.alarm.breakEndPlayValue = newValue } }
+                        ),
+                        mode: Binding(
+                            get: { profile.alarm.breakEndPlayMode },
+                            set: { newValue in profileStore.updateCurrentProfile { $0.alarm.breakEndPlayMode = newValue } }
+                        ),
+                        maxValueForSeconds: 60,
+                        maxValueForLoops: 15
                     )
                 }
                 
                 Section("Sound Library") {
                     VStack(alignment: .leading) {
-                        Text("Built-in Sounds: \(soundLibrary.builtInSounds.count)")
+                        Text("Built-in: \(soundLibrary.builtInSounds.count) • Imported: \(soundLibrary.importedSounds.count)")
                             .font(.caption)
-                        Text("Imported Sounds: \(soundLibrary.importedSounds.count)")
-                            .font(.caption)
+                            .foregroundColor(.secondary)
                     }
                     
                     Button("Import Sound File...") {
@@ -328,117 +432,148 @@ struct SoundsSettingsTab: View {
     }
 }
 
-struct SoundPicker: View {
+struct SoundPickerRow: View {
     let title: String
-    @Binding var selectedId: String
+    @Binding var soundId: String
+    @Binding var volume: Double
     
     @EnvironmentObject var soundLibrary: SoundLibrary
     @EnvironmentObject var alarmPlayer: AlarmPlayer
     
     var body: some View {
-        HStack {
-            Text(title)
-            Spacer()
-            Picker("", selection: $selectedId) {
-                ForEach(soundLibrary.sounds) { sound in
-                    Text(sound.name).tag(sound.id)
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text(title)
+                Spacer()
+                Picker("", selection: $soundId) {
+                    Text("None").tag("none")
+                    Divider()
+                    ForEach(soundLibrary.sounds) { sound in
+                        Text(sound.name).tag(sound.id)
+                    }
                 }
+                .frame(width: 150)
+                
+                Button(action: {
+                    if soundId != "none" {
+                        alarmPlayer.testSound(soundId: soundId, volume: volume)
+                    }
+                }) {
+                    Image(systemName: "play.circle")
+                }
+                .buttonStyle(.borderless)
+                .disabled(soundId == "none")
             }
-            .frame(width: 150)
             
-            Button(action: { alarmPlayer.testSound(soundId: selectedId) }) {
-                Image(systemName: "play.circle")
-            }
-            .buttonStyle(.borderless)
+            VolumeControlRow(volume: $volume)
+                .padding(.leading, 0)
         }
+        .padding(.vertical, 4)
     }
 }
 
-// MARK: - Notifications Tab
-
-struct NotificationsSettingsTab: View {
-    @EnvironmentObject var profileStore: ProfileStore
+fileprivate struct VolumeControlRow: View {
+    @Binding var volume: Double
+    
+    private static let percentFormatter: NumberFormatter = {
+        let f = NumberFormatter()
+        f.numberStyle = .none
+        f.minimum = 0
+        f.maximum = 200
+        return f
+    }()
+    
+    private var percentBinding: Binding<Int> {
+        Binding(
+            get: { Int(round(Self.clamp(volume) * 100.0)) },
+            set: { newPercent in
+                let clamped = max(0, min(200, newPercent))
+                volume = Double(clamped) / 100.0
+            }
+        )
+    }
     
     var body: some View {
-        Form {
-            if let profile = profileStore.currentProfile {
-                Section("Work Warning Reminder") {
-                    Stepper(
-                        "Show warning \(profile.notifications.workWarningSecondsBeforeEnd) seconds before work ends",
-                        value: Binding(
-                            get: { profile.notifications.workWarningSecondsBeforeEnd },
-                            set: { newValue in profileStore.updateCurrentProfile { $0.notifications.workWarningSecondsBeforeEnd = newValue } }
-                        ),
-                        in: 10...300,
-                        step: 10
-                    )
-                }
-                
-                Section("Break Warning Reminder") {
-                    Stepper(
-                        "Show warning \(profile.notifications.breakWarningSecondsBeforeEnd) seconds before break ends",
-                        value: Binding(
-                            get: { profile.notifications.breakWarningSecondsBeforeEnd },
-                            set: { newValue in profileStore.updateCurrentProfile { $0.notifications.breakWarningSecondsBeforeEnd = newValue } }
-                        ),
-                        in: 10...300,
-                        step: 10
-                    )
-                }
-                
-                Section("Banner Notifications") {
-                    Toggle(
-                        "Show banner notifications",
-                        isOn: Binding(
-                            get: { profile.notifications.bannerEnabled },
-                            set: { newValue in profileStore.updateCurrentProfile { $0.notifications.bannerEnabled = newValue } }
-                        )
-                    )
-                    
-                    Text("Banners appear at warning time and when phases end.")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                }
-                
-                Section("Alarm Durations") {
-                    Stepper(
-                        "Warning alarm: \(profile.alarm.warningPlaySeconds) seconds",
-                        value: Binding(
-                            get: { profile.alarm.warningPlaySeconds },
-                            set: { newValue in profileStore.updateCurrentProfile { $0.alarm.warningPlaySeconds = newValue } }
-                        ),
-                        in: 1...30
-                    )
-                    
-                    Stepper(
-                        "Break start alarm: \(profile.alarm.breakStartPlaySeconds) seconds",
-                        value: Binding(
-                            get: { profile.alarm.breakStartPlaySeconds },
-                            set: { newValue in profileStore.updateCurrentProfile { $0.alarm.breakStartPlaySeconds = newValue } }
-                        ),
-                        in: 1...60
-                    )
-                    
-                    Stepper(
-                        "Break end alarm: \(profile.alarm.breakEndPlaySeconds) seconds",
-                        value: Binding(
-                            get: { profile.alarm.breakEndPlaySeconds },
-                            set: { newValue in profileStore.updateCurrentProfile { $0.alarm.breakEndPlaySeconds = newValue } }
-                        ),
-                        in: 1...60
-                    )
-                    
-                    Text("Alarms loop until duration expires or you click Stop Alarm.")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                }
-            } else {
-                Text("Select a profile to edit notification settings.")
+        HStack(spacing: 10) {
+            Image(systemName: "speaker.wave.2.fill")
+                .imageScale(.medium)
+                .foregroundColor(.secondary)
+                .frame(width: 20, alignment: .leading)
+                .help("Volume")
+            
+            TightSlider(value: $volume, range: 0...2)
+                .frame(maxWidth: .infinity)
+
+            
+            HStack(spacing: 4) {
+                TextField("", value: percentBinding, formatter: Self.percentFormatter)
+                    .frame(width: 65, height: 24)
+                    .textFieldStyle(.roundedBorder)
+                    .multilineTextAlignment(.trailing)
+                    .monospacedDigit()
+                Text("%")
                     .foregroundColor(.secondary)
             }
+            .frame(width: 84, alignment: .trailing)
         }
-        .formStyle(.grouped)
-        .padding()
+    }
+    
+    private static func clamp(_ v: Double) -> Double {
+        max(0.0, min(2.0, v))
+    }
+}
+
+// MARK: - Alarm Duration Row
+
+struct AlarmDurationRow: View {
+    let title: String
+    @Binding var value: Int
+    @Binding var mode: AlarmDurationMode
+    let maxValueForSeconds: Int
+    let maxValueForLoops: Int
+    
+    private var currentMax: Int {
+        mode == .seconds ? maxValueForSeconds : maxValueForLoops
+    }
+    
+    private var valueText: String {
+        switch mode {
+        case .seconds:
+            return "\(value)s"
+        case .loopCount:
+            return value == 1 ? "1 time" : "\(value) times"
+        }
+    }
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text(title)
+                Spacer()
+                
+                Picker("", selection: $mode) {
+                    Text("Seconds").tag(AlarmDurationMode.seconds)
+                    Text("Loop count").tag(AlarmDurationMode.loopCount)
+                }
+                .pickerStyle(.segmented)
+                .frame(width: 150)
+            }
+            
+            HStack {
+                Stepper(
+                    valueText,
+                    value: $value,
+                    in: 1...currentMax
+                )
+                .onChange(of: mode) { _, _ in
+                    // Clamp value to new max when switching modes
+                    if value > currentMax {
+                        value = currentMax
+                    }
+                }
+            }
+        }
+        .padding(.vertical, 2)
     }
 }
 
@@ -450,9 +585,9 @@ struct OverlaySettingsTab: View {
     var body: some View {
         Form {
             if let profile = profileStore.currentProfile {
-                Section("Break Overlay Behavior") {
-                    Toggle(
-                        "Strict Mode (no skip button)",
+                Section("Skip Break") {
+                    FeatureToggle(
+                        title: "Strict Mode (no skip button)",
                         isOn: Binding(
                             get: { profile.overlay.strictDefault },
                             set: { newValue in profileStore.updateCurrentProfile { $0.overlay.strictDefault = newValue } }
@@ -462,37 +597,72 @@ struct OverlaySettingsTab: View {
                     Text("When enabled, you cannot skip breaks. This helps enforce rest periods.")
                         .font(.caption)
                         .foregroundColor(.secondary)
+                    
+                    if !profile.overlay.strictDefault {
+                        FeatureToggle(
+                            title: "Delayed skip",
+                            isOn: Binding(
+                                get: { profile.overlay.delayedSkipEnabled },
+                                set: { newValue in profileStore.updateCurrentProfile { $0.overlay.delayedSkipEnabled = newValue } }
+                            )
+                        )
+                        
+                        if profile.overlay.delayedSkipEnabled {
+                            Stepper(
+                                "Skip available after \(profile.overlay.delayedSkipSeconds)s",
+                                value: Binding(
+                                    get: { profile.overlay.delayedSkipSeconds },
+                                    set: { newValue in profileStore.updateCurrentProfile { $0.overlay.delayedSkipSeconds = newValue } }
+                                ),
+                                in: 5...120,
+                                step: 5
+                            )
+                        }
+                    }
                 }
                 
-                Section("Delayed Skip") {
-                    Toggle(
-                        "Enable delayed skip",
+                Section("Extra Time") {
+                    FeatureToggle(
+                        title: "Allow \"Need More Time\" button",
                         isOn: Binding(
-                            get: { profile.overlay.delayedSkipEnabled },
-                            set: { newValue in profileStore.updateCurrentProfile { $0.overlay.delayedSkipEnabled = newValue } }
+                            get: { profile.overlay.extraTimeEnabled },
+                            set: { newValue in profileStore.updateCurrentProfile { $0.overlay.extraTimeEnabled = newValue } }
                         )
                     )
-                    .disabled(profile.overlay.strictDefault)
                     
-                    if profile.overlay.delayedSkipEnabled && !profile.overlay.strictDefault {
+                    if profile.overlay.extraTimeEnabled {
                         Stepper(
-                            "Skip available after \(profile.overlay.delayedSkipSeconds) seconds",
+                            "Extra time: \(formatDuration(profile.overlay.extraTimeSeconds))",
                             value: Binding(
-                                get: { profile.overlay.delayedSkipSeconds },
-                                set: { newValue in profileStore.updateCurrentProfile { $0.overlay.delayedSkipSeconds = newValue } }
+                                get: { profile.overlay.extraTimeSeconds },
+                                set: { newValue in profileStore.updateCurrentProfile { $0.overlay.extraTimeSeconds = newValue } }
                             ),
-                            in: 5...120,
-                            step: 5
+                            in: 15...300,
+                            step: 15
                         )
                     }
                     
-                    Text("Delayed skip shows a disabled button that becomes enabled after the specified time.")
+                    Text("Temporarily dismiss the overlay to finish something urgent. Break resumes after.")
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
                 
-                Section("Overlay Info") {
-                    Text("The break overlay covers all connected monitors to help you take a proper break. You can always stop the alarm sound.")
+                Section("After Break Ends") {
+                    FeatureToggle(
+                        title: "Hold overlay until manually dismissed",
+                        isOn: Binding(
+                            get: { profile.overlay.holdAfterBreak },
+                            set: { newValue in profileStore.updateCurrentProfile { $0.overlay.holdAfterBreak = newValue } }
+                        )
+                    )
+                    
+                    Text("Keep the overlay at 0:00 and show Start/Cancel buttons instead of auto-advancing.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+                
+                Section("Info") {
+                    Text("The break overlay covers all connected monitors to help you take a proper break.")
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
@@ -503,6 +673,18 @@ struct OverlaySettingsTab: View {
         }
         .formStyle(.grouped)
         .padding()
+    }
+    
+    private func formatDuration(_ seconds: Int) -> String {
+        if seconds >= 60 {
+            let mins = seconds / 60
+            let secs = seconds % 60
+            if secs > 0 {
+                return "\(mins)m \(secs)s"
+            }
+            return "\(mins) min"
+        }
+        return "\(seconds)s"
     }
 }
 
@@ -526,8 +708,8 @@ struct FeaturesSettingsTab: View {
         Form {
             if let profile = profileStore.currentProfile {
                 Section("Auto-Start") {
-                    Toggle(
-                        "Auto-start work after break",
+                    FeatureToggle(
+                        title: "Auto-start work after break",
                         isOn: Binding(
                             get: { profile.features.autoStartWork },
                             set: { newValue in profileStore.updateCurrentProfile { $0.features.autoStartWork = newValue } }
@@ -540,16 +722,16 @@ struct FeaturesSettingsTab: View {
                 }
                 
                 Section("Menu Bar Display") {
-                    Toggle(
-                        "Show countdown in menu bar",
+                    FeatureToggle(
+                        title: "Show countdown in menu bar",
                         isOn: Binding(
                             get: { profile.features.menuBarCountdownTextEnabled },
                             set: { newValue in profileStore.updateCurrentProfile { $0.features.menuBarCountdownTextEnabled = newValue } }
                         )
                     )
                     
-                    Toggle(
-                        "Use custom PNG icons",
+                    FeatureToggle(
+                        title: "Use custom PNG icons",
                         isOn: Binding(
                             get: { profile.features.menuBarIcons.useCustomIcons },
                             set: { newValue in profileStore.updateCurrentProfile { $0.features.menuBarIcons.useCustomIcons = newValue } }
@@ -591,7 +773,7 @@ struct FeaturesSettingsTab: View {
                             onClear: { profileStore.updateCurrentProfile { $0.features.menuBarIcons.pausedIcon = "⏸️" } }
                         )
                         
-                        Text("Icons are set as template images for proper light/dark mode support. Use single-color PNGs with transparency.")
+                        Text("Icons are set as template images for proper light/dark mode support.")
                             .font(.caption)
                             .foregroundColor(.secondary)
                     }
@@ -628,54 +810,14 @@ struct FeaturesSettingsTab: View {
                                 set: { newValue in profileStore.updateCurrentProfile { $0.features.menuBarIcons.pausedIcon = newValue } }
                             )
                         )
-                        
-                        HStack {
-                            Text("Presets:")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                            Spacer()
-                            Button("🍅") {
-                                profileStore.updateCurrentProfile {
-                                    $0.features.menuBarIcons.idleIcon = "🍅"
-                                    $0.features.menuBarIcons.workIcon = "🍅"
-                                    $0.features.menuBarIcons.breakIcon = "☕️"
-                                    $0.features.menuBarIcons.pausedIcon = "⏸️"
-                                }
-                            }
-                            .buttonStyle(.bordered)
-                            Button("⏱️") {
-                                profileStore.updateCurrentProfile {
-                                    $0.features.menuBarIcons.idleIcon = "⏱️"
-                                    $0.features.menuBarIcons.workIcon = "🔥"
-                                    $0.features.menuBarIcons.breakIcon = "💤"
-                                    $0.features.menuBarIcons.pausedIcon = "⏸️"
-                                }
-                            }
-                            .buttonStyle(.bordered)
-                            Button("🔴") {
-                                profileStore.updateCurrentProfile {
-                                    $0.features.menuBarIcons.idleIcon = "⚪️"
-                                    $0.features.menuBarIcons.workIcon = "🔴"
-                                    $0.features.menuBarIcons.breakIcon = "🟢"
-                                    $0.features.menuBarIcons.pausedIcon = "🟡"
-                                }
-                            }
-                            .buttonStyle(.bordered)
-                        }
                     }
                 }
                 
                 Section("Focus Mode") {
-                    Toggle(
-                        "Focus mode integration",
-                        isOn: Binding(
-                            get: { profile.features.focusModeIntegrationEnabled },
-                            set: { newValue in profileStore.updateCurrentProfile { $0.features.focusModeIntegrationEnabled = newValue } }
-                        )
-                    )
-                    .disabled(true)
+                    Text("Coming Soon")
+                        .foregroundColor(.secondary)
                     
-                    Text("Focus mode must be configured manually in System Settings > Focus.")
+                    Text("macOS Focus Mode integration requires special entitlements.")
                         .font(.caption)
                         .foregroundColor(.secondary)
                     
@@ -910,6 +1052,86 @@ struct StatRow: View {
     }
 }
 
+// MARK: - Reusable Components
+
+/// Consistent feature toggle with highlighted background when enabled
+struct FeatureToggle: View {
+    let title: String
+    @Binding var isOn: Bool
+    
+    var body: some View {
+        Toggle(isOn: $isOn) {
+            HStack {
+                Text(title)
+                Spacer()
+            }
+        }
+        // Force the switch to use our intended active/tint styling.
+        // (Menu bar apps can sometimes present settings while the window is not yet key,
+        // which can make switches appear "inactive grey" until reopened.)
+        .toggleStyle(.switch)
+        .tint(.orange)
+        .environment(\.controlActiveState, .active)
+        .padding(.vertical, 2)
+        .padding(.horizontal, 8)
+        .background(isOn ? Color.orange.opacity(0.15) : Color.clear)
+        .cornerRadius(6)
+    }
+}
+
+/// Duration picker with minutes and seconds
+struct DurationPicker: View {
+    let label: String
+    @Binding var seconds: Int
+    let range: ClosedRange<Int>
+    
+    var body: some View {
+        HStack {
+            Text(label)
+            Spacer()
+            HStack(alignment: .center, spacing: 6) {
+                TextField("", value: Binding(
+                    get: { seconds / 60 },
+                    set: { newMins in 
+                        let currentSecs = seconds % 60
+                        let newTotal = newMins * 60 + currentSecs
+                        seconds = max(range.lowerBound, min(range.upperBound, newTotal))
+                    }
+                ), formatter: NumberFormatter())
+                .frame(width: 60, height: 24)
+                .textFieldStyle(.roundedBorder)
+                .multilineTextAlignment(.trailing)
+                .monospacedDigit()
+                
+                Text("m")
+                    .foregroundColor(.secondary)
+                    .frame(width: 12, height: 24, alignment: .center)
+                
+                TextField("", value: Binding(
+                    get: { seconds % 60 },
+                    set: { newSecs in
+                        let currentMins = seconds / 60
+                        let newTotal = currentMins * 60 + newSecs
+                        seconds = max(range.lowerBound, min(range.upperBound, newTotal))
+                    }
+                ), formatter: NumberFormatter())
+                .frame(width: 60, height: 24)
+                .textFieldStyle(.roundedBorder)
+                .multilineTextAlignment(.trailing)
+                .monospacedDigit()
+                
+                Text("s")
+                    .foregroundColor(.secondary)
+                    .frame(width: 12, height: 24, alignment: .center)
+            }
+            
+            Stepper("", value: $seconds, in: range, step: 1)
+                .labelsHidden()
+        }
+    }
+}
+
 #Preview {
     SettingsView()
 }
+

@@ -15,42 +15,57 @@ class OverlayManager: NSObject, ObservableObject {
     
     @Published var skipEnabled = false
     @Published var skipCountdown: Int = 0
+    @Published var isShowingPostBreakHold: Bool = false
     
     private var skipTimer: Timer?
+    
+    // MARK: - Screen Tracking (Optimization)
+    private var windowScreens: Set<ObjectIdentifier> = []
     
     init(timerEngine: TimerEngine, alarmPlayer: AlarmPlayer, profileStore: ProfileStore) {
         self.timerEngine = timerEngine
         self.alarmPlayer = alarmPlayer
         self.profileStore = profileStore
         super.init()
+        
+        timerEngine.$isHoldingAfterBreak
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] isHolding in
+                guard let self = self else { return }
+                let wasHolding = self.isShowingPostBreakHold
+                self.isShowingPostBreakHold = isHolding
+                
+                if isHolding != wasHolding && !self.overlayWindows.isEmpty {
+                    self.refreshOverlayContent()
+                }
+            }
+            .store(in: &cancellables)
     }
     
     // MARK: - Show/Hide Overlay
     
     func showOverlay() {
-        // Close any existing overlays
         hideOverlay()
         
         guard let profile = profileStore?.currentProfile else { return }
         
-        // Reset skip state
         skipEnabled = false
         skipCountdown = 0
+        isShowingPostBreakHold = false
+        windowScreens.removeAll()
         
-        // Create overlay for each screen
         for screen in NSScreen.screens {
             let window = createOverlayWindow(for: screen)
             overlayWindows.append(window)
+            windowScreens.insert(ObjectIdentifier(screen))
             window.orderFrontRegardless()
         }
         
-        // Handle delayed skip if enabled
         if profile.overlay.delayedSkipEnabled && !profile.overlay.strictDefault {
             let delaySeconds = profile.overlay.delayedSkipSeconds
             skipCountdown = delaySeconds
             startSkipCountdown()
         } else if !profile.overlay.strictDefault {
-            // Not strict mode and no delay - enable skip immediately
             skipEnabled = true
         }
     }
@@ -64,16 +79,60 @@ class OverlayManager: NSObject, ObservableObject {
             window.close()
         }
         overlayWindows.removeAll()
+        windowScreens.removeAll()
+        isShowingPostBreakHold = false
+    }
+    
+    // MARK: - Optimized Content Refresh
+    
+    private func refreshOverlayContent() {
+        guard !overlayWindows.isEmpty else { return }
+        
+        guard let timerEngine = timerEngine,
+              let alarmPlayer = alarmPlayer,
+              let profileStore = profileStore else { return }
+        
+        let currentScreens = Set(NSScreen.screens.map { ObjectIdentifier($0) })
+        
+        if currentScreens != windowScreens {
+            let wasShowing = !overlayWindows.isEmpty
+            hideOverlay()
+            
+            if wasShowing {
+                for screen in NSScreen.screens {
+                    let window = createOverlayWindow(for: screen)
+                    overlayWindows.append(window)
+                    windowScreens.insert(ObjectIdentifier(screen))
+                    window.orderFrontRegardless()
+                }
+            }
+        } else {
+            for window in overlayWindows {
+                let contentView = OverlayContentView(
+                    timerEngine: timerEngine,
+                    alarmPlayer: alarmPlayer,
+                    overlayManager: self,
+                    profileStore: profileStore
+                )
+                window.contentView = NSHostingView(rootView: contentView)
+            }
+        }
     }
     
     // MARK: - Window Creation
     
     private func createOverlayWindow(for screen: NSScreen) -> NSWindow {
+        guard let timerEngine = timerEngine,
+              let alarmPlayer = alarmPlayer,
+              let profileStore = profileStore else {
+            fatalError("Required dependencies not available")
+        }
+        
         let contentView = OverlayContentView(
-            timerEngine: timerEngine!,
-            alarmPlayer: alarmPlayer!,
+            timerEngine: timerEngine,
+            alarmPlayer: alarmPlayer,
             overlayManager: self,
-            profileStore: profileStore!
+            profileStore: profileStore
         )
         
         let hostingView = NSHostingView(rootView: contentView)
@@ -95,7 +154,6 @@ class OverlayManager: NSObject, ObservableObject {
         window.acceptsMouseMovedEvents = true
         window.isReleasedWhenClosed = false
         
-        // Make the window full screen
         window.setFrame(screen.frame, display: true)
         
         return window
@@ -126,6 +184,18 @@ class OverlayManager: NSObject, ObservableObject {
     func stopAlarm() {
         alarmPlayer?.stop()
     }
+    
+    func requestExtraTime() {
+        timerEngine?.requestExtraTime()
+    }
+    
+    func confirmStartWork() {
+        timerEngine?.confirmStartWork()
+    }
+    
+    func cancelAfterBreak() {
+        timerEngine?.cancelAfterBreak()
+    }
 }
 
 // MARK: - SwiftUI Overlay Content
@@ -138,31 +208,37 @@ struct OverlayContentView: View {
     
     var body: some View {
         ZStack {
-            // Semi-transparent background
             Color.black.opacity(0.85)
                 .ignoresSafeArea()
             
-            VStack(spacing: 40) {
-                // Phase indicator
-                Text(timerEngine.phase.displayName)
-                    .font(.system(size: 48, weight: .bold))
-                    .foregroundColor(.white)
-                
-                // Timer display
-                Text(timerEngine.formattedRemaining)
-                    .font(.system(size: 120, weight: .light, design: .monospaced))
-                    .foregroundColor(.white)
-                
-                // Progress message
-                Text(breakMessage)
-                    .font(.title2)
-                    .foregroundColor(.white.opacity(0.8))
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal, 60)
-                
-                // Buttons
+            if timerEngine.isHoldingAfterBreak {
+                postBreakHoldView
+            } else {
+                normalBreakView
+            }
+        }
+    }
+    
+    // MARK: - Normal Break View
+    
+    private var normalBreakView: some View {
+        VStack(spacing: 40) {
+            Text(timerEngine.phase.displayName)
+                .font(.system(size: 48, weight: .bold))
+                .foregroundColor(.white)
+            
+            Text(timerEngine.formattedRemaining)
+                .font(.system(size: 120, weight: .light, design: .monospaced))
+                .foregroundColor(.white)
+            
+            Text(breakMessage)
+                .font(.title2)
+                .foregroundColor(.white.opacity(0.8))
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 60)
+            
+            VStack(spacing: 16) {
                 HStack(spacing: 20) {
-                    // Stop Alarm button (always visible when playing)
                     if alarmPlayer.isPlaying {
                         Button(action: { overlayManager.stopAlarm() }) {
                             HStack {
@@ -179,7 +255,6 @@ struct OverlayContentView: View {
                         .buttonStyle(.plain)
                     }
                     
-                    // End Break button (conditional)
                     if showEndBreakButton {
                         Button(action: { overlayManager.endBreak() }) {
                             HStack {
@@ -197,17 +272,100 @@ struct OverlayContentView: View {
                         .disabled(!overlayManager.skipEnabled)
                     }
                 }
-                .padding(.top, 20)
                 
-                // Skip countdown message
-                if !overlayManager.skipEnabled && profileStore.currentProfile?.overlay.delayedSkipEnabled == true {
-                    Text("Skip available in \(overlayManager.skipCountdown)s")
-                        .font(.caption)
-                        .foregroundColor(.white.opacity(0.6))
+                if showExtraTimeButton {
+                    Button(action: { overlayManager.requestExtraTime() }) {
+                        HStack {
+                            Image(systemName: "clock.badge.plus")
+                            Text("I need \(extraTimeText)")
+                        }
+                        .font(.title3)
+                        .padding(.horizontal, 24)
+                        .padding(.vertical, 12)
+                        .background(Color.orange.opacity(0.8))
+                        .foregroundColor(.white)
+                        .cornerRadius(12)
+                    }
+                    .buttonStyle(.plain)
                 }
+            }
+            .padding(.top, 20)
+            
+            if !overlayManager.skipEnabled && profileStore.currentProfile?.overlay.delayedSkipEnabled == true {
+                Text("Skip available in \(overlayManager.skipCountdown)s")
+                    .font(.caption)
+                    .foregroundColor(.white.opacity(0.6))
             }
         }
     }
+    
+    // MARK: - Post-Break Hold View
+    
+    private var postBreakHoldView: some View {
+        VStack(spacing: 40) {
+            Text("Break Complete!")
+                .font(.system(size: 48, weight: .bold))
+                .foregroundColor(.white)
+            
+            Text("00:00")
+                .font(.system(size: 120, weight: .light, design: .monospaced))
+                .foregroundColor(.white.opacity(0.6))
+            
+            Text("Ready to start your next work session?")
+                .font(.title2)
+                .foregroundColor(.white.opacity(0.8))
+                .multilineTextAlignment(.center)
+            
+            HStack(spacing: 20) {
+                if alarmPlayer.isPlaying {
+                    Button(action: { overlayManager.stopAlarm() }) {
+                        HStack {
+                            Image(systemName: "speaker.slash.fill")
+                            Text("Stop Alarm")
+                        }
+                        .font(.title3)
+                        .padding(.horizontal, 24)
+                        .padding(.vertical, 12)
+                        .background(Color.red.opacity(0.8))
+                        .foregroundColor(.white)
+                        .cornerRadius(12)
+                    }
+                    .buttonStyle(.plain)
+                }
+                
+                Button(action: { overlayManager.confirmStartWork() }) {
+                    HStack {
+                        Image(systemName: "play.fill")
+                        Text("Start Work")
+                    }
+                    .font(.title3)
+                    .padding(.horizontal, 24)
+                    .padding(.vertical, 12)
+                    .background(Color.green.opacity(0.8))
+                    .foregroundColor(.white)
+                    .cornerRadius(12)
+                }
+                .buttonStyle(.plain)
+                
+                Button(action: { overlayManager.cancelAfterBreak() }) {
+                    HStack {
+                        Image(systemName: "xmark")
+                        Text("Cancel")
+                    }
+                    .font(.title3)
+                    .padding(.horizontal, 24)
+                    .padding(.vertical, 12)
+                    .background(Color.gray.opacity(0.6))
+                    .foregroundColor(.white)
+                    .cornerRadius(12)
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.top, 20)
+        }
+    }
+    
+    // MARK: - Computed Properties
     
     private var breakMessage: String {
         switch timerEngine.phase {
@@ -222,9 +380,33 @@ struct OverlayContentView: View {
     
     private var showEndBreakButton: Bool {
         guard let profile = profileStore.currentProfile else { return false }
-        
-        // Show if not strict, or if delayed skip is enabled
         return !profile.overlay.strictDefault || profile.overlay.delayedSkipEnabled
+    }
+    
+    private var showExtraTimeButton: Bool {
+        guard let profile = profileStore.currentProfile else { return false }
+        return profile.overlay.extraTimeEnabled && !timerEngine.isInExtraTime
+    }
+    
+    /// Formats extra time text:
+    /// - Whole minutes: "1 min", "2 min", etc.
+    /// - Non-whole minutes: "1 min and 30 seconds", "2 min and 15 seconds", etc.
+    private var extraTimeText: String {
+        guard let profile = profileStore.currentProfile else { return "1 min" }
+        let totalSeconds = profile.overlay.extraTimeSeconds
+        let minutes = totalSeconds / 60
+        let seconds = totalSeconds % 60
+        
+        if seconds == 0 {
+            // Whole minutes
+            return "\(minutes) min"
+        } else if minutes == 0 {
+            // Only seconds (less than a minute)
+            return "\(seconds) seconds"
+        } else {
+            // Minutes and seconds
+            return "\(minutes) min and \(seconds) seconds"
+        }
     }
     
     private var endBreakButtonText: String {

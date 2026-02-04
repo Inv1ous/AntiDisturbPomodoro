@@ -11,6 +11,12 @@ class ProfileStore: ObservableObject {
     private let encoder = JSONEncoder()
     private let decoder = JSONDecoder()
     
+    // MARK: - Debounced Save (CPU/IO optimization)
+    /// Workitem for debounced save operations
+    private var saveWorkItem: DispatchWorkItem?
+    /// Debounce interval for save operations (prevents rapid disk writes)
+    private let saveDebounceInterval: TimeInterval = 0.5
+    
     init(appHome: AppHome) {
         self.appHome = appHome
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
@@ -23,8 +29,9 @@ class ProfileStore: ObservableObject {
         set {
             if let newValue = newValue, let index = profiles.firstIndex(where: { $0.id == newValue.id }) {
                 profiles[index] = newValue
-                saveProfile(newValue)
-                profiles = profiles
+                debouncedSaveProfile(newValue)
+                // Trigger objectWillChange manually since we're modifying array element
+                objectWillChange.send()
             }
         }
     }
@@ -65,6 +72,10 @@ class ProfileStore: ObservableObject {
         profiles = []
         let profileFiles = appHome.listProfileFiles()
         
+        // Pre-allocate capacity for better memory performance
+        var loadedProfiles: [ProfileData] = []
+        loadedProfiles.reserveCapacity(profileFiles.count)
+        
         for url in profileFiles {
             // Skip base_defaults
             if url.lastPathComponent == "base_defaults.profile.json" { continue }
@@ -72,15 +83,18 @@ class ProfileStore: ObservableObject {
             do {
                 let data = try Data(contentsOf: url)
                 let profile = try decoder.decode(ProfileData.self, from: data)
-                profiles.append(profile)
+                loadedProfiles.append(profile)
             } catch {
                 print("Failed to load profile \(url): \(error)")
             }
         }
         
         // Sort by name
-        profiles.sort { $0.name < $1.name }
+        loadedProfiles.sort { $0.name < $1.name }
+        profiles = loadedProfiles
     }
+    
+    // MARK: - Save Operations
     
     func saveProfile(_ profile: ProfileData) {
         let url = appHome.profileURL(for: profile.id)
@@ -89,6 +103,29 @@ class ProfileStore: ObservableObject {
             try data.write(to: url)
         } catch {
             print("Failed to save profile \(profile.id): \(error)")
+        }
+    }
+    
+    /// Debounced save to prevent rapid disk writes when user is adjusting settings
+    private func debouncedSaveProfile(_ profile: ProfileData) {
+        // Cancel any pending save
+        saveWorkItem?.cancel()
+        
+        // Create new debounced save
+        let workItem = DispatchWorkItem { [weak self] in
+            self?.saveProfile(profile)
+        }
+        saveWorkItem = workItem
+        
+        // Schedule after debounce interval
+        DispatchQueue.main.asyncAfter(deadline: .now() + saveDebounceInterval, execute: workItem)
+    }
+    
+    /// Force immediate save (for critical operations)
+    func forceSaveCurrentProfile() {
+        saveWorkItem?.cancel()
+        if let profile = currentProfile {
+            saveProfile(profile)
         }
     }
     
@@ -171,9 +208,9 @@ class ProfileStore: ObservableObject {
         
         profiles[index] = resetProfile
         saveProfile(resetProfile)
-        DispatchQueue.main.async {
-            self.profiles = self.profiles
-        }
+        
+        // Trigger UI update
+        objectWillChange.send()
     }
     
     private func loadBaseDefaults() -> ProfileData? {
@@ -194,8 +231,7 @@ class ProfileStore: ObservableObject {
     func updateCurrentProfile(_ update: (inout ProfileData) -> Void) {
         guard var profile = currentProfile else { return }
         update(&profile)
-        DispatchQueue.main.async {
-            self.currentProfile = profile
-        }
+        // Set directly without async dispatch since we're already on main thread in SwiftUI
+        self.currentProfile = profile
     }
 }

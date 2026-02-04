@@ -18,6 +18,12 @@ class StatusBarController: NSObject {
     private let alarmPlayer: AlarmPlayer
     private let statsStore: StatsStore
     
+    // MARK: - Optimization: Throttle menu bar updates
+    private var lastDisplayedTime: String = ""
+    private var lastState: TimerState = .idle
+    private var lastPhase: TimerPhase = .work
+    private var lastIsExtraTime: Bool = false
+    
     init(
         appHome: AppHome,
         soundLibrary: SoundLibrary,
@@ -55,7 +61,7 @@ class StatusBarController: NSObject {
     
     private func setupPopover() {
         popover = NSPopover()
-        popover.contentSize = NSSize(width: 320, height: 400)
+        popover.contentSize = NSSize(width: 320, height: 420)
         popover.behavior = .transient
         popover.animates = true
         
@@ -73,7 +79,6 @@ class StatusBarController: NSObject {
     }
     
     private func setupEventMonitor() {
-        // Close popover when clicking outside
         eventMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
             if self?.popover.isShown == true {
                 self?.closePopover()
@@ -82,29 +87,47 @@ class StatusBarController: NSObject {
     }
     
     private func observeTimerUpdates() {
-        // Update menu bar when timer changes
         timerEngine.$remainingSeconds
-            .combineLatest(timerEngine.$state, timerEngine.$phase)
+            .combineLatest(timerEngine.$state, timerEngine.$phase, timerEngine.$isInExtraTime)
             .receive(on: DispatchQueue.main)
-            .sink { [weak self] _, _, _ in
-                self?.updateMenuBar()
+            .sink { [weak self] remaining, state, phase, isExtraTime in
+                self?.updateMenuBarIfNeeded(remaining: remaining, state: state, phase: phase, isExtraTime: isExtraTime)
             }
             .store(in: &cancellables)
         
         profileStore.$currentProfileId
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
-                self?.updateMenuBar()
+                self?.forceUpdateMenuBar()
             }
             .store(in: &cancellables)
         
-        // Also observe profile changes for icon updates
         profileStore.objectWillChange
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
-                self?.updateMenuBar()
+                self?.forceUpdateMenuBar()
             }
             .store(in: &cancellables)
+    }
+    
+    // MARK: - Optimized Menu Bar Update
+    
+    private func updateMenuBarIfNeeded(remaining: TimeInterval, state: TimerState, phase: TimerPhase, isExtraTime: Bool) {
+        let currentTime = timerEngine.formattedRemaining
+        let stateChanged = state != lastState || phase != lastPhase || isExtraTime != lastIsExtraTime
+        
+        if currentTime != lastDisplayedTime || stateChanged {
+            lastDisplayedTime = currentTime
+            lastState = state
+            lastPhase = phase
+            lastIsExtraTime = isExtraTime
+            updateMenuBar()
+        }
+    }
+    
+    private func forceUpdateMenuBar() {
+        lastDisplayedTime = ""
+        updateMenuBar()
     }
     
     private func updateMenuBar() {
@@ -112,26 +135,28 @@ class StatusBarController: NSObject {
               let profile = profileStore.currentProfile else { return }
         
         let iconSettings = profile.features.menuBarIcons
-        let showCountdown = profile.features.menuBarCountdownTextEnabled && timerEngine.state != .idle
+        let showCountdown = profile.features.menuBarCountdownTextEnabled && (timerEngine.state != .idle || timerEngine.isInExtraTime)
         
-        // Determine which icon to show based on state
         let iconValue: String
-        switch timerEngine.state {
-        case .idle:
-            iconValue = iconSettings.idleIcon
-        case .paused:
-            iconValue = iconSettings.pausedIcon
-        case .running:
-            iconValue = timerEngine.phase.isBreak ? iconSettings.breakIcon : iconSettings.workIcon
+        if timerEngine.isInExtraTime {
+            iconValue = "⏰"
+        } else {
+            switch timerEngine.state {
+            case .idle:
+                iconValue = iconSettings.idleIcon
+            case .paused:
+                iconValue = iconSettings.pausedIcon
+            case .running:
+                iconValue = timerEngine.phase.isBreak ? iconSettings.breakIcon : iconSettings.workIcon
+            }
         }
         
-        // Try to load custom image
-        if iconSettings.useCustomIcons, let image = appHome.loadMenuBarIcon(iconValue) {
+        if iconSettings.useCustomIcons && !timerEngine.isInExtraTime,
+           let image = appHome.loadMenuBarIcon(iconValue) {
             button.image = image
             button.imagePosition = showCountdown ? .imageLeft : .imageOnly
             button.title = showCountdown ? " \(timerEngine.formattedRemaining)" : ""
         } else {
-            // Use emoji text
             button.image = nil
             if showCountdown {
                 button.title = "\(iconValue) \(timerEngine.formattedRemaining)"
@@ -154,8 +179,6 @@ class StatusBarController: NSObject {
     private func showPopover() {
         guard let button = statusItem.button else { return }
         popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
-        
-        // Activate app to ensure popover is interactive
         NSApp.activate(ignoringOtherApps: true)
     }
     
@@ -198,9 +221,15 @@ struct MenuBarPopoverView: View {
             
             // Timer Display
             VStack(spacing: 8) {
-                Text(timerEngine.phase.displayName)
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
+                if timerEngine.isInExtraTime {
+                    Text("Extra Time")
+                        .font(.subheadline)
+                        .foregroundColor(.orange)
+                } else {
+                    Text(timerEngine.phase.displayName)
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                }
                 
                 Text(timerEngine.formattedRemaining)
                     .font(.system(size: 48, weight: .light, design: .monospaced))
@@ -212,28 +241,45 @@ struct MenuBarPopoverView: View {
             
             // Control Buttons
             HStack(spacing: 12) {
-                // Start/Pause
-                Button(action: { timerEngine.toggleStartPause() }) {
-                    Image(systemName: timerEngine.state == .running ? "pause.fill" : "play.fill")
-                        .frame(width: 44, height: 44)
-                }
-                .buttonStyle(.borderedProminent)
-                
-                // Reset
-                Button(action: { timerEngine.reset() }) {
-                    Image(systemName: "stop.fill")
-                        .frame(width: 44, height: 44)
-                }
-                .buttonStyle(.bordered)
-                .disabled(timerEngine.state == .idle)
-                
-                // Skip (if allowed)
-                if canSkip {
-                    Button(action: { timerEngine.skip() }) {
-                        Image(systemName: "forward.fill")
+                if timerEngine.isInExtraTime {
+                    // End Extra Time button - FIXED: increased width and better layout
+                    Button(action: { timerEngine.endExtraTimeEarly() }) {
+                        HStack(spacing: 6) {
+                            Image(systemName: "arrow.uturn.backward")
+                            Text("Resume Break")
+                                .lineLimit(1)
+                                .fixedSize(horizontal: true, vertical: false)
+                        }
+                        .font(.callout)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 10)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.orange)
+                } else {
+                    // Start/Pause
+                    Button(action: { timerEngine.toggleStartPause() }) {
+                        Image(systemName: timerEngine.state == .running ? "pause.fill" : "play.fill")
+                            .frame(width: 44, height: 44)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    
+                    // Reset
+                    Button(action: { timerEngine.reset() }) {
+                        Image(systemName: "stop.fill")
                             .frame(width: 44, height: 44)
                     }
                     .buttonStyle(.bordered)
+                    .disabled(timerEngine.state == .idle)
+                    
+                    // Skip (if allowed)
+                    if canSkip {
+                        Button(action: { timerEngine.skip() }) {
+                            Image(systemName: "forward.fill")
+                                .frame(width: 44, height: 44)
+                        }
+                        .buttonStyle(.bordered)
+                    }
                 }
             }
             
@@ -303,6 +349,9 @@ struct MenuBarPopoverView: View {
     }
     
     private var statusText: String {
+        if timerEngine.isInExtraTime {
+            return "Break paused - finish up!"
+        }
         switch timerEngine.state {
         case .idle: return "Ready to start"
         case .running: return "In progress"
@@ -314,10 +363,8 @@ struct MenuBarPopoverView: View {
         guard let profile = profileStore.currentProfile else { return false }
         guard timerEngine.state != .idle else { return false }
         
-        // During work, always allow skip
         if timerEngine.phase == .work { return true }
         
-        // During break, check strict mode
         return !profile.overlay.strictDefault
     }
 }

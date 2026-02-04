@@ -88,5 +88,19 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 self?.overlayManager.hideOverlay()
             }
         }
+        
+        timerEngine.onExtraTimeEnd = { [weak self] in
+            // Extra time ended - overlay will be shown by onBreakStart
+            DispatchQueue.main.async {
+                self?.overlayManager.showOverlay()
+            }
+        }
+        
+        timerEngine.onHoldAfterBreak = { [weak self] in
+            // Keep overlay showing with post-break UI
+            DispatchQueue.main.async {
+                self?.overlayManager.showOverlay()
+            }
+        }
     }
 }

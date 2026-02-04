@@ -4,11 +4,23 @@ import Combine
 /// Manages the sound library, including built-in and imported sounds
 class SoundLibrary: ObservableObject {
     
-    @Published private(set) var sounds: [SoundEntry] = []
+    @Published private(set) var sounds: [SoundEntry] = [] {
+        didSet {
+            // Invalidate cached arrays when sounds change
+            _cachedBuiltInSounds = nil
+            _cachedImportedSounds = nil
+        }
+    }
     
     private let appHome: AppHome
     private let encoder = JSONEncoder()
     private let decoder = JSONDecoder()
+    
+    // MARK: - Cached Computed Properties (Memory optimization)
+    /// Cache for builtInSounds to avoid creating new arrays on every access
+    private var _cachedBuiltInSounds: [SoundEntry]?
+    /// Cache for importedSounds to avoid creating new arrays on every access
+    private var _cachedImportedSounds: [SoundEntry]?
     
     init(appHome: AppHome) {
         self.appHome = appHome
@@ -173,13 +185,25 @@ class SoundLibrary: ObservableObject {
         return resolveFileURL(for: entry)
     }
     
-    // MARK: - Helpers
+    // MARK: - Helpers (Optimized with caching)
     
+    /// Returns cached array of built-in sounds
     var builtInSounds: [SoundEntry] {
-        sounds.filter { $0.source == .builtIn }
+        if let cached = _cachedBuiltInSounds {
+            return cached
+        }
+        let filtered = sounds.filter { $0.source == .builtIn }
+        _cachedBuiltInSounds = filtered
+        return filtered
     }
     
+    /// Returns cached array of imported sounds
     var importedSounds: [SoundEntry] {
-        sounds.filter { $0.source == .imported }
+        if let cached = _cachedImportedSounds {
+            return cached
+        }
+        let filtered = sounds.filter { $0.source == .imported }
+        _cachedImportedSounds = filtered
+        return filtered
     }
 }
