@@ -10,7 +10,7 @@ class UpdateChecker: ObservableObject {
     static let repoOwner = "Inv1ous"  // TODO: Replace with actual GitHub username
     
     /// GitHub repository name
-    static let repoName = "PomodoroPlus"    // TODO: Replace with actual repo name if different
+    static let repoName = "AntiDisturbPomodoro"    // TODO: Replace with actual repo name if different
     
     /// Current app version from Info.plist
     static var currentVersion: String {
@@ -731,25 +731,46 @@ private class DownloadDelegate: NSObject, URLSessionDownloadDelegate {
         // as soon as this method returns. We MUST copy it synchronously before returning.
         
         let fileManager = FileManager.default
-        let tempDir = URL(fileURLWithPath: "/tmp")
-        let persistentLocation = tempDir.appendingPathComponent("AntiDisturbPomodoro_download_\(UUID().uuidString).zip")
         
+        // Use the app's own temporary directory first (works in both sandboxed and non-sandboxed).
+        // Fall back to /tmp if that fails for any reason.
+        let primaryTempDir = fileManager.temporaryDirectory
+        let fallbackTempDir = URL(fileURLWithPath: "/tmp")
+        
+        let fileName = "AntiDisturbPomodoro_download_\(UUID().uuidString).zip"
+        let primaryLocation = primaryTempDir.appendingPathComponent(fileName)
+        let fallbackLocation = fallbackTempDir.appendingPathComponent(fileName)
+        
+        var persistentLocation: URL?
+        var lastError: Error?
+        
+        // Try primary location (app temp dir)
         do {
-            // Copy the file immediately before this method returns
-            try fileManager.copyItem(at: location, to: persistentLocation)
-            
-            // Now we can safely dispatch to main queue with the persistent copy
+            try fileManager.copyItem(at: location, to: primaryLocation)
+            persistentLocation = primaryLocation
+        } catch {
+            lastError = error
+            // Try fallback location (/tmp)
+            do {
+                try fileManager.copyItem(at: location, to: fallbackLocation)
+                persistentLocation = fallbackLocation
+            } catch {
+                lastError = error
+            }
+        }
+        
+        if let persistentLocation = persistentLocation {
             DispatchQueue.main.async { [weak self] in
                 self?.checker?.handleDownloadedFile(at: persistentLocation)
             }
-        } catch {
+        } else {
             DispatchQueue.main.async { [weak self] in
                 self?.checker?.isDownloading = false
                 self?.checker?.cleanupDownloadSession()
                 
                 let alert = NSAlert()
                 alert.messageText = "Download Error"
-                alert.informativeText = "Failed to save downloaded file: \(error.localizedDescription)"
+                alert.informativeText = "Failed to save downloaded file: \(lastError?.localizedDescription ?? "Unknown error")\n\nThis is usually caused by App Sandbox being enabled. Please ensure ENABLE_APP_SANDBOX is set to NO in Xcode build settings."
                 alert.alertStyle = .critical
                 alert.addButton(withTitle: "OK")
                 alert.runModal()
