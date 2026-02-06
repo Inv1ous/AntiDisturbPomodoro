@@ -1,5 +1,21 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
-<dict/>
+<dict>
+    <!-- Sandbox DISABLED - Required for self-updating functionality -->
+    <!-- The app needs to be able to write to /Applications and execute update scripts -->
+    <key>com.apple.security.app-sandbox</key>
+    <false/>
+    
+    <!-- Hardened Runtime is still enabled via Xcode build settings -->
+    <!-- These entitlements are for hardened runtime, not sandbox -->
+    
+    <!-- Allow outgoing network connections (for checking/downloading updates) -->
+    <key>com.apple.security.network.client</key>
+    <true/>
+    
+    <!-- Allow AppleEvents for automation (used for admin privilege escalation) -->
+    <key>com.apple.security.automation.apple-events</key>
+    <true/>
+</dict>
 </plist>

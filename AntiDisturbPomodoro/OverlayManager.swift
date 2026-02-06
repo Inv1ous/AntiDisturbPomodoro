@@ -4,6 +4,7 @@ import SwiftUI
 import Combine
 
 /// Manages full-screen overlay windows across all monitors during breaks
+@MainActor
 class OverlayManager: NSObject, ObservableObject {
     
     private var overlayWindows: [NSWindow] = []
@@ -16,6 +17,10 @@ class OverlayManager: NSObject, ObservableObject {
     @Published var skipEnabled = false
     @Published var skipCountdown: Int = 0
     @Published var isShowingPostBreakHold: Bool = false
+    
+    // Preserve delayed-skip state across extra time
+    private var preservedSkipCountdown: Int?
+    private var preservedSkipEnabled: Bool?
     
     private var skipTimer: Timer?
     
@@ -39,7 +44,7 @@ class OverlayManager: NSObject, ObservableObject {
 
     deinit {
         cancellables.removeAll()
-        DispatchQueue.main.async { [weak self] in
+        Task { @MainActor [weak self] in
             self?.hideOverlay()
         }
     }
@@ -66,9 +71,23 @@ class OverlayManager: NSObject, ObservableObject {
         
         // Handle delayed skip if enabled
         if profile.overlay.delayedSkipEnabled && !profile.overlay.strictDefault {
-            let delaySeconds = profile.overlay.delayedSkipSeconds
-            skipCountdown = delaySeconds
-            startSkipCountdown()
+            if let preservedEnabled = preservedSkipEnabled {
+                // Restore previously preserved state
+                skipEnabled = preservedEnabled
+                if !preservedEnabled {
+                    let remaining = max(0, preservedSkipCountdown ?? profile.overlay.delayedSkipSeconds)
+                    skipCountdown = remaining
+                    startSkipCountdown()
+                }
+                // Clear preserved values after restoration
+                preservedSkipEnabled = nil
+                preservedSkipCountdown = nil
+            } else {
+                // Fresh countdown
+                let delaySeconds = profile.overlay.delayedSkipSeconds
+                skipCountdown = delaySeconds
+                startSkipCountdown()
+            }
         } else if !profile.overlay.strictDefault {
             // Not strict mode and no delay - enable skip immediately
             skipEnabled = true
@@ -150,19 +169,21 @@ class OverlayManager: NSObject, ObservableObject {
         skipTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
             guard let self = self else { return }
             
-            self.skipCountdown -= 1
-            
-            if self.skipCountdown <= 0 {
-                self.skipTimer?.invalidate()
-                self.skipTimer = nil
-                self.skipEnabled = true
+            Task { @MainActor in
+                self.skipCountdown -= 1
+                
+                if self.skipCountdown <= 0 {
+                    self.skipTimer?.invalidate()
+                    self.skipTimer = nil
+                    self.skipEnabled = true
+                }
             }
         }
     }
     
     // MARK: - Actions
     
-    func endBreak() {
+    @MainActor func endBreak() {
         timerEngine?.skip()
     }
     
@@ -170,15 +191,28 @@ class OverlayManager: NSObject, ObservableObject {
         alarmPlayer?.stop()
     }
     
-    func requestExtraTime() {
+    @MainActor func requestExtraTime() {
+        // Preserve delayed skip state so it can resume after extra time
+        if let profile = profileStore?.currentProfile, profile.overlay.delayedSkipEnabled && !profile.overlay.strictDefault {
+            preservedSkipEnabled = skipEnabled
+            if !skipEnabled {
+                preservedSkipCountdown = max(0, skipCountdown)
+            } else {
+                preservedSkipCountdown = nil
+            }
+        } else {
+            preservedSkipEnabled = nil
+            preservedSkipCountdown = nil
+        }
+        
         timerEngine?.requestExtraTime()
     }
     
-    func confirmStartWork() {
+    @MainActor func confirmStartWork() {
         timerEngine?.confirmStartWork()
     }
     
-    func cancelAfterBreak() {
+    @MainActor func cancelAfterBreak() {
         timerEngine?.cancelAfterBreak()
     }
 }
@@ -269,7 +303,14 @@ struct OverlayContentView: View {
                 if showExtraTimeButton {
                     Button(action: { overlayManager.requestExtraTime() }) {
                         HStack {
-                            Image(systemName: "clock.badge.plus")
+                            ZStack(alignment: .bottomTrailing) {
+                                Image(systemName: "clock")
+                                Image(systemName: "plus.circle.fill")
+                                    .font(.system(size: 12, weight: .bold))
+                                    .offset(x: 4, y: 4)
+                            }
+                            .symbolRenderingMode(.hierarchical)
+                            .imageScale(.large)
                             Text("I need \(extraTimeText)")
                         }
                         .font(.title3)
@@ -393,11 +434,13 @@ struct OverlayContentView: View {
     private var extraTimeText: String {
         guard let profile = profileStore.currentProfile else { return "1 min" }
         let seconds = profile.overlay.extraTimeSeconds
-        if seconds >= 60 {
-            let minutes = seconds / 60
-            return "\(minutes) min"
+        let minsDecimal = Double(seconds) / 60.0
+        // If it's an exact whole minute, keep integer minutes; otherwise show up to 2 decimal places
+        if seconds % 60 == 0 {
+            let whole = Int(minsDecimal)
+            return "\(whole) min"
         } else {
-            return "\(seconds)s"
+            return String(format: "%.2f min", minsDecimal)
         }
     }
     
@@ -417,3 +460,4 @@ struct OverlayContentView: View {
         overlayManager.skipEnabled ? .white : .white.opacity(0.5)
     }
 }
+

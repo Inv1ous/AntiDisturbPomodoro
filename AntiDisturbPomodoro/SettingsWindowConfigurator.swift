@@ -58,9 +58,18 @@ struct SettingsWindowConfigurator: NSViewRepresentable {
         ) { [weak window] _ in
             // Small delay to allow other UI interactions
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                guard let window = window else { return }
+
+                // If the settings window has an attached sheet (e.g., alert, open panel), do not close.
+                if window.attachedSheet != nil { return }
+
+                // If the current key or modal window is a sheet presented by this window, do not close.
+                if let key = NSApp.keyWindow, key.sheetParent == window { return }
+                if let modal = NSApp.modalWindow, modal.sheetParent == window { return }
+
                 // Only close if window is still not key (user didn't click back)
-                if window?.isKeyWindow == false {
-                    window?.close()
+                if !window.isKeyWindow {
+                    window.close()
                 }
             }
         }

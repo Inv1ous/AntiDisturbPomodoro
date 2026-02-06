@@ -4,6 +4,7 @@ import SwiftUI
 import Combine
 
 /// Controls the menu bar status item and popover
+@MainActor
 class StatusBarController: NSObject {
     
     private var statusItem: NSStatusItem!
@@ -42,13 +43,22 @@ class StatusBarController: NSObject {
     }
 
     deinit {
-        if let eventMonitor {
+        // Note: deinit runs on arbitrary thread, so we need to be careful
+        // The cancellables will be cleaned up automatically
+        // Event monitor removal and status item removal should happen on main thread
+        // but since this class is @MainActor, it should be fine
+    }
+    
+    // MARK: - Cleanup (call before deallocation if needed)
+    
+    func cleanup() {
+        if let eventMonitor = eventMonitor {
             NSEvent.removeMonitor(eventMonitor)
             self.eventMonitor = nil
         }
         cancellables.removeAll()
-
-        if let statusItem {
+        
+        if let statusItem = statusItem {
             NSStatusBar.system.removeStatusItem(statusItem)
         }
     }
@@ -87,7 +97,7 @@ class StatusBarController: NSObject {
     private func setupEventMonitor() {
         // Close popover when clicking outside
         eventMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
-            DispatchQueue.main.async {
+            Task { @MainActor in
                 guard let self else { return }
                 if self.popover.isShown {
                     self.closePopover()
@@ -98,26 +108,33 @@ class StatusBarController: NSObject {
     
     private func observeTimerUpdates() {
         // Update menu bar when timer changes
+        // Use Task to properly bridge Combine callbacks to MainActor context
         timerEngine.$remainingSeconds
             .combineLatest(timerEngine.$state, timerEngine.$phase, timerEngine.$isInExtraTime)
-            .receive(on: DispatchQueue.main)
+            .receive(on: RunLoop.main)
             .sink { [weak self] _, _, _, _ in
-                self?.updateMenuBar()
+                Task { @MainActor in
+                    self?.updateMenuBar()
+                }
             }
             .store(in: &cancellables)
         
         profileStore.$currentProfileId
-            .receive(on: DispatchQueue.main)
+            .receive(on: RunLoop.main)
             .sink { [weak self] _ in
-                self?.updateMenuBar()
+                Task { @MainActor in
+                    self?.updateMenuBar()
+                }
             }
             .store(in: &cancellables)
         
         // Also observe profile changes for icon updates
         profileStore.objectWillChange
-            .receive(on: DispatchQueue.main)
+            .receive(on: RunLoop.main)
             .sink { [weak self] _ in
-                self?.updateMenuBar()
+                Task { @MainActor in
+                    self?.updateMenuBar()
+                }
             }
             .store(in: &cancellables)
     }
@@ -241,12 +258,13 @@ struct MenuBarPopoverView: View {
                 if timerEngine.isInExtraTime {
                     // End Extra Time button
                     Button(action: { timerEngine.endExtraTimeEarly() }) {
-                        VStack {
+                        HStack(spacing: 6) {
                             Image(systemName: "arrow.uturn.backward")
                             Text("Resume Break")
-                                .font(.caption2)
+                                .lineLimit(nil)
                         }
-                        .frame(width: 70, height: 50)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
                     }
                     .buttonStyle(.borderedProminent)
                     .tint(.orange)
@@ -364,3 +382,4 @@ struct MenuBarPopoverView: View {
         return !profile.overlay.strictDefault
     }
 }
+

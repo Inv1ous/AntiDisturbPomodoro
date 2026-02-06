@@ -187,8 +187,7 @@ class AlarmPlayer: NSObject, ObservableObject {
             self?.isPlaying = false
         }
 
-        // Back on playback queue
-        isStopping = false
+        // Done stopping
     }
     
     private func cleanupEngine() {
@@ -424,3 +423,4 @@ class AlarmPlayer: NSObject, ObservableObject {
         play(soundId: soundId, config: config)
     }
 }
+

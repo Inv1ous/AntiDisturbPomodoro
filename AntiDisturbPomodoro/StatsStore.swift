@@ -12,6 +12,9 @@ class StatsStore: ObservableObject {
     private let encoder = JSONEncoder()
     private let decoder = JSONDecoder()
     
+    /// Serial queue for stats I/O and aggregation
+    private let workQueue = DispatchQueue(label: "com.antidisturbpomodoro.stats", qos: .utility)
+    
     private var allEntries: [StatsEntry] = []
     
     init(appHome: AppHome) {
@@ -21,8 +24,14 @@ class StatsStore: ObservableObject {
     // MARK: - Load
     
     func load() {
-        loadAllEntries()
-        updateSummaries()
+        workQueue.async { [weak self] in
+            guard let self = self else { return }
+            self.loadAllEntries()
+            let summaries = self.computeSummaries()
+            DispatchQueue.main.async {
+                self.applySummaries(summaries)
+            }
+        }
     }
     
     private func loadAllEntries() {
@@ -63,16 +72,26 @@ class StatsStore: ObservableObject {
             skipped: skipped,
             strictMode: strictMode
         )
-        
-        // Append to file
-        appendToFile(entry)
-        
-        // Update in-memory data
-        allEntries.append(entry)
-        updateSummaries()
+
+        // Do I/O + summary computation off-main
+        workQueue.async { [weak self] in
+            guard let self = self else { return }
+
+            // Append to file
+            self.appendToFile(entry)
+
+            // Update in-memory data
+            self.allEntries.append(entry)
+
+            // Publish summaries on main
+            let summaries = self.computeSummaries()
+            DispatchQueue.main.async {
+                self.applySummaries(summaries)
+            }
+        }
     }
-    
-    private func appendToFile(_ entry: StatsEntry) {
+
+private func appendToFile(_ entry: StatsEntry) {
         guard let data = try? encoder.encode(entry),
               let jsonString = String(data: data, encoding: .utf8) else { return }
         
@@ -96,29 +115,48 @@ class StatsStore: ObservableObject {
     // MARK: - Summaries
     
     private func updateSummaries() {
+        // Called from potentially non-main threads (eg. timer / background work). Keep computation off-main,
+        // then publish summaries on main to satisfy SwiftUI thread-safety.
+        let summaries = computeSummaries()
+        DispatchQueue.main.async { [weak self] in
+            self?.applySummaries(summaries)
+        }
+    }
+
+    /// Pure computation of summaries from current entries (safe to call from background queues)
+    private func computeSummaries() -> (today: StatsSummary, week: StatsSummary, allTime: StatsSummary) {
         let now = Date()
         let calendar = Calendar.current
-        
+
         // Today
         let todayStart = calendar.startOfDay(for: now)
         let todayEntries = allEntries.filter { entry in
             guard let date = parseDate(entry.ts) else { return false }
             return date >= todayStart
         }
-        todaySummary = computeSummary(from: todayEntries)
-        
+        let today = computeSummary(from: todayEntries)
+
         // This week
         let weekStart = calendar.date(from: calendar.dateComponents([.yearForWeekOfYear, .weekOfYear], from: now)) ?? now
         let weekEntries = allEntries.filter { entry in
             guard let date = parseDate(entry.ts) else { return false }
             return date >= weekStart
         }
-        weekSummary = computeSummary(from: weekEntries)
-        
+        let week = computeSummary(from: weekEntries)
+
         // All time
-        allTimeSummary = computeSummary(from: allEntries)
+        let allTime = computeSummary(from: allEntries)
+
+        return (today: today, week: week, allTime: allTime)
     }
-    
+
+    @MainActor
+    private func applySummaries(_ summaries: (today: StatsSummary, week: StatsSummary, allTime: StatsSummary)) {
+        todaySummary = summaries.today
+        weekSummary = summaries.week
+        allTimeSummary = summaries.allTime
+    }
+
     private func computeSummary(from entries: [StatsEntry]) -> StatsSummary {
         var summary = StatsSummary()
         

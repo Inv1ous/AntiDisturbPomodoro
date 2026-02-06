@@ -24,7 +24,9 @@ class SoundLibrary: ObservableObject {
             do {
                 let data = try Data(contentsOf: url)
                 let library = try decoder.decode(SoundLibraryData.self, from: data)
-                sounds = library.sounds
+                DispatchQueue.main.async { [weak self] in
+                    self?.sounds = library.sounds
+                }
             } catch {
                 print("Failed to load sound library: \(error)")
                 createDefaultLibrary()
@@ -47,7 +49,8 @@ class SoundLibrary: ObservableObject {
     // MARK: - Default Library
     
     private func createDefaultLibrary() {
-        sounds = [
+        DispatchQueue.main.async { [weak self] in
+            self?.sounds = [
             SoundEntry(
                 id: "builtin.chime",
                 name: "Chime",
@@ -84,6 +87,7 @@ class SoundLibrary: ObservableObject {
                 path: "system://default"
             )
         ]
+        }
         save()
     }
     

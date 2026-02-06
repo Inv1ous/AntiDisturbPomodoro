@@ -19,6 +19,7 @@ struct AntiDisturbPomodoroApp: App {
     }
 }
 
+@MainActor
 class AppDelegate: NSObject, NSApplicationDelegate {
     var statusBarController: StatusBarController?
     
@@ -97,10 +98,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
         
         timerEngine.onExtraTimeEnd = { [weak self] in
-            // Extra time ended - overlay will be shown by onBreakStart
-            DispatchQueue.main.async {
-                self?.overlayManager.showOverlay()
-            }
+            // Extra time ended. Do not show overlay here because onBreakStart will handle it.
+            // Calling showOverlay here would cause a second show that resets delayed-skip state.
         }
         
         timerEngine.onHoldAfterBreak = { [weak self] in
@@ -111,3 +110,4 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 }
+

@@ -3,6 +3,7 @@ import Combine
 import AppKit
 
 /// Core timer state machine managing work/break phases
+@MainActor
 class TimerEngine: ObservableObject {
     
     // MARK: - Published State
@@ -337,7 +338,9 @@ class TimerEngine: ObservableObject {
         // Use a non-scheduled timer and add it once to the common run loop modes.
         // (Avoids the same timer being registered in multiple modes via scheduledTimer + add.)
         let t = Timer(timeInterval: 0.25, repeats: true) { [weak self] _ in
-            self?.tick()
+            Task { @MainActor [weak self] in
+                self?.tick()
+            }
         }
         RunLoop.main.add(t, forMode: .common)
         timer = t

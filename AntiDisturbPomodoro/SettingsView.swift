@@ -1192,6 +1192,15 @@ struct AboutSettingsTab: View {
                 Text("Updates are automatically checked on app startup.")
                     .font(.caption)
                     .foregroundColor(.secondary)
+                
+                HStack {
+                    Text("Troubleshooting")
+                    Spacer()
+                    Button("View Update Log") {
+                        updateChecker.openUpdateLog()
+                    }
+                    .buttonStyle(.link)
+                }
             }
             
             Section("Support") {
@@ -1230,7 +1239,6 @@ struct AboutSettingsTab: View {
     }
 }
 
-#Preview {
-    SettingsView()
-}
+// Preview disabled - requires complex environment object setup
+// To preview, run the app and open Settings
 
