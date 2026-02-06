@@ -10,7 +10,7 @@ class UpdateChecker: ObservableObject {
     static let repoOwner = "Inv1ous"  // TODO: Replace with actual GitHub username
     
     /// GitHub repository name
-    static let repoName = "AntiDisturbPomodoro-"    // TODO: Replace with actual repo name if different
+    static let repoName = "AntiDisturbPomodoro"    // TODO: Replace with actual repo name if different
     
     /// Current app version from Info.plist
     static var currentVersion: String {
